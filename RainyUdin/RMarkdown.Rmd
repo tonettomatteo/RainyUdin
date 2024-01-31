@@ -1,0 +1,709 @@
+---
+title: "Rainy Udin"
+author: "Tonetto Matteo 139403"
+output:
+  ioslides_presentation:
+    css: style.css
+    widescreen: true
+    logo: logo.png
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Introduzione:
+
+Quotidianamente, attraverso i media e non solo, sentiamo parlare di cambiamento climatico e la riduzione del riscaldamento globale rappresenta una della piu' grandi priorita' per il futuro dell'umanita'.  
+
+Udine e' una provincia meteorologicamente nota per la sua alta piovosita' e negli anni scorsi si e' trovata spesso in vetta alle classifiche nazionali per la quantita' di acqua precipitata all'anno.  
+
+L'acqua e' in grado di calmierare gli effetti del surriscaldamento superficiale e grazie a dati raccolti in un arco temporale di 30 anni a Udine analizzeremo l'andamento delle precipitazioni e in correlazione all'aumento delle temperature.  
+
+## Obiettivi:
+
+Questo report si pone di analizzare i seguenti punti:
+
+-   andamento della precipitazione totale annua negli anni;
+
+-   stagionalita' delle precipitazioni e individuazione dei periodi piu' piovosi;
+
+-   andamento della frequenza delle precipitazioni molto intense;
+
+-   andamento delle temperature.
+
+
+```{r library, warning=FALSE, include=FALSE}
+# data analisys library
+library(tidyr)
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+
+# plotting library
+library(ggplot2)
+library(gganimate)
+library(plotly)
+```
+
+
+```{r import and tidy, warning=FALSE, include=FALSE}
+
+# prepare link structure
+link1 = "Data/dati-giornalieri-Udine S.O.-"
+link2 = "99.csv"
+
+# scrivo un lista con gli anni
+years = sprintf("%d", c(seq(1991, 2022)))
+years
+
+# creo lista specifica nomi e tipologie di variabili
+list_names = c("mese", "giorno", "pioggia", "temp_min", "temp_med", "temp_max", "umid_min", "umid_med", "umid_max", "vento_med", "vento_max", "dir_vento_max", "rad", "press_med")
+list_types = cols(col_integer(), col_integer(), col_double(), col_double(), col_double(), col_double(), col_integer(), col_integer(), col_integer(), col_integer(), col_integer(), col_integer(), col_integer(), col_double())
+
+# leggo i dati da 32 csv corrispondenti alle misure giorno per giorno di 32 anni dal 1991 al 2022
+#l = vector(mode = "list", 32)
+l = lst(32)
+for (i in 1:32) {
+  if (as.integer(years[i])%%4==0){  # eccezione per gli anni bisestili
+    l[[i]] = read_delim(str_c(link1, years[i], link2), delim = ";", skip = 1, n_max = 366, na = c("","NA", "-", " "), col_names = list_names, col_types = list_types)
+  }
+  else{
+    l[[i]] = read_delim(str_c(link1, years[i], link2), delim = ";", skip = 1, n_max = 365, na = c("","NA", "-", " "), col_names = list_names, col_types = list_types)
+  }
+}
+
+#sistemo le date ed elimino i parametri non necessari ai fini dell'analisi.
+for (i in 1:32) {
+  l[[i]] = l[[i]]%>%
+    #mutate(data = dmy(str_c(giorno, "/", mese, "/", years[i]))) %>%
+    mutate(data = as.Date(ymd(str_c(years[i], "-", mese, "-", giorno)))) %>%
+    select(data, everything(),-mese, -giorno, -vento_med, -vento_max, -dir_vento_max, -rad) %>%
+    arrange(data)
+}
+
+# combino tutti e 32 gli anni in un unico dataframe
+udine_whole = tibble()
+for (i in 1:32) {
+  udine_whole = rbind(udine_whole, l[[i]])
+}
+
+class(udine_whole)
+problems(udine_whole)
+readr::spec(udine_whole)  # ritorno NULL perche' tibble ma non creato da readr
+
+udine_whole
+
+# Per uniformita' e scelta personale decido di prendere in considerazione i dati che comprendono le misurazioni a partire dal 1993 fino al 2022. In questo modo considero un lasso di tempo di 30 anni esatti. Posso suddividerli ottenendo 6 lustri.
+
+# I dati sulla pressione media e temperatura media sono presenti dal 1995, quelli sull'umidita' media hanno valori realistici sempre a partire dal 1995
+
+udine = udine_whole %>%
+  filter(data >= as_date("19930101") & data <= as_date("20221231")) %>%
+  mutate(lustro = case_when(year(data) %in% (1993:1997) ~ "93/97",
+                            year(data) %in% (1998:2002) ~ "98/02",
+                            year(data) %in% (2003:2007) ~ "03/07",
+                            year(data) %in% (2008:2012) ~ "08/12",
+                            year(data) %in% (2013:2017) ~ "13/17",
+                            year(data) %in% (2018:2022) ~ "18/22")) %>%
+  select(everything())
+
+# questo dataframe rappresenta i dati giornalieri a partire dal 1993 al 2022
+udine
+
+udine %>% filter(data == as_date("19940101"))
+
+udine <- as_tibble(udine)
+
+class(udine)
+
+max(as.Date(udine$data), na.rm = TRUE)  # "2022-12-31"
+min(as.Date(udine$data), na.rm = TRUE)  # "1993-01-01"
+
+
+```
+## Data-set:
+
+Al fine dell'analisi sono stati prelevati gli open-data dal sito di Arpa FVG:
+
+-   <https://www.meteo.fvg.it/archivio.php?ln=&p=dati>
+
+All'interno dei quali si ha accesso a tutte le stazioni meteorologiche registrate presenti nella regione del Friuli-Venezia Giulia, nel caso in questione inerenti alla stazione di Udine S.O., per la quale anno per anno dal 1993 al 2022, sono stati rilevate le misurazioni giornaliere di millimetri di pioggia caduti, temperatura minima-media-massima, umidita' minima-media-massima, forza media-massima vento e direzione, radiazione e pressione media.  
+
+---
+
+Non tutte le misure sono state prese in considerazione e alla fine della procedura di importazione e si e' ottenuto un unico tibble cosi' rappresentato:
+```{r preview csv, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+head(udine)
+```
+
+```{r analisi, warning=FALSE, include=FALSE}
+### ANALISI ###
+
+#PRECIPITAZIONI
+
+# 10 giorni piu' piovosi in assoluto
+top_ten_pioggia <- udine %>%
+  select(data, pioggia) %>%
+  arrange(desc(pioggia)) %>%
+  slice(1:10)
+
+#giorni_tot
+
+#totali giorni di pioggia nel data frame
+c_tot_giorni_pioggia <- udine%>%
+  select(data, pioggia)%>%
+  filter(pioggia >= 1.0)%>%
+  count()
+
+#totali giorni di pioggia nel data frame
+c_tot_giorni_secchi <- udine%>%
+  select(data, pioggia)%>%
+  filter(pioggia < 1.0)%>%
+  count()
+
+c_tot_rapp <- c_tot_giorni_pioggia/(c_tot_giorni_pioggia+c_tot_giorni_secchi)
+c_tot_rapp
+
+# funione che calcola i giorni di pioggia sulla base dell'anno e del mese
+giorni_pioggia <- function(ann, mes){
+  udine %>%
+    select(data, pioggia) %>% 
+    filter(pioggia >= 1.0, year(data) %in% ann, month(data) %in% mes) %>% # %in% al posto di == per evitare warning
+    count()
+}
+
+# funione che calcola i giorni non di pioggia sulla base dell'anno e del mese
+giorni_secchi <- function(ann, mes){
+  udine %>%
+    select(data, pioggia) %>% 
+    filter(pioggia < 1.0, year(data) %in% ann, month(data) %in% mes) %>% 
+    count()
+}
+
+#I seguenti indici sono definiti dall’Expert Team on Climate Change Detection and Indices (ETCCDI) della World Meteorological Organization (WMO) delle Nazioni Unite (UN)
+
+# funzione che calcola i giorni senza pioggia all'interno di un lustro 
+giorni_r0 <- function(lustr){
+  udine %>%
+    select(data, lustro, pioggia) %>% 
+    filter(1.0 > pioggia, lustro %in% lustr) %>%
+    count()
+}
+
+# funzione che calcola i giorni con precipitazione maggiore uguale a 1 mm e minore di 10 mm all'interno di un lustro 
+giorni_r1 <- function(lustr){
+  udine %>%
+    select(data, lustro, pioggia) %>% 
+    filter(1.0 <= pioggia, pioggia < 10.0, lustro %in% lustr) %>%
+    count()
+}
+
+# funzione che calcola i giorni con precipitazione moderata, maggiore uguale a 10 mm e minore di 20 mm all'interno di un lustro 
+giorni_r10 <- function(lustr){
+  udine %>%
+    select(data, lustro, pioggia) %>% 
+    filter(10.0 <= pioggia, pioggia < 20.0, lustro %in% lustr) %>%
+    count()
+}
+
+# funzione che calcola i giorni con precipitazione intensa, maggiore uguale a 20 mm e minore di 50 mm all'interno di un lustro 
+giorni_r20 <- function(lustr){
+  udine %>%
+    select(data, lustro, pioggia) %>% 
+    filter(20.0 <= pioggia, pioggia < 50.0, lustro %in% lustr) %>%
+    count()
+}
+
+# funzione che calcola i giorni con precipitazione estremamemte intensa, <= 50mm
+giorni_r50 <- function(lustr){
+  udine %>%
+    select(data, lustro, pioggia) %>% 
+    filter(50.0 <= pioggia, lustro %in% lustr) %>%
+    count()
+}
+
+# giorni_pioggia(1996, 04) # esempio di calcolo giorni di pioggia nell'aprile del 1996
+# giorni_pioggia(1996, (1:12)) # esempio calcolo giorni di pioggia totali nell'anno 1996
+
+#calcolo mese per mesi i valori percentuali richiamando le funzioni
+ud_month_total <- udine %>%
+  group_by(anno = year(data), mese = month(data)) %>%
+  mutate(somma = sum(pioggia, na.rm = TRUE),
+         dry = giorni_secchi(anno, mese),
+         wet = giorni_pioggia(anno, mese)) %>% 
+  mutate(perc = wet/(dry+wet))
+
+# creo tabella in cui aggiungo riferimento temporale collegato al mese ed anno
+ud_rain_mese <- ud_month_total %>%
+  distinct(anno, mese, lustro, somma, dry, wet, perc) %>%
+  mutate(data = make_date(year = anno, month = mese, day = "1"))
+
+# statistica annuale
+ud_rain_anno <- udine %>%
+  group_by(anno = year(data)) %>%
+  mutate(somma = sum(pioggia, na.rm = TRUE),
+         dry = giorni_secchi(anno, (1:12)),
+         wet = giorni_pioggia(anno, (1:12))) %>% 
+  mutate(perc = wet/(dry+wet)) %>%
+  distinct(anno, lustro, somma, dry, wet, perc)
+
+# statistica con indici su lustri
+ud_rain_indici_lustro <- udine %>%
+  group_by(lustro) %>%
+  select(pioggia, lustro) %>%
+  mutate(somma = sum(pioggia, na.rm = TRUE),
+         r0 = giorni_r0(lustro),
+         r1 = giorni_r1(lustro),
+         r10 = giorni_r10(lustro),
+         r20 = giorni_r20(lustro),
+         r50 = giorni_r50(lustro)) %>%
+  distinct(lustro, somma, r0, r1, r10, r20, r50)
+
+# TEMPERATURE
+
+ud_temp_mese <- ud_month_total %>%
+  group_by(anno = year(data), mese = month(data)) %>%
+  mutate(min = mean(temp_min, na.rm = TRUE),
+         med = mean(temp_med, na.rm = TRUE),
+         max = mean(temp_max, na.rm = TRUE)) %>%
+  distinct(anno, mese, lustro, min, med, max) %>%
+  mutate(data = make_date(year = anno, month = mese, day = "1"))
+
+ud_temp_anno <- ud_month_total %>%
+  group_by(anno = year(data)) %>%
+  mutate(min = mean(temp_min, na.rm = TRUE),
+         med = mean(temp_med, na.rm = TRUE),
+         max = mean(temp_max, na.rm = TRUE)) %>%
+  distinct(anno, lustro, min, med, max)
+
+# creo modelli lineari sull'andamento delle medie delle temperature
+
+mod_min = lm(min ~ anno, data = ud_temp_anno)
+mod_med = lm(med ~ anno, data = ud_temp_anno)
+mod_max = lm(max ~ anno, data = ud_temp_anno)
+
+summary(mod_min)
+summary(mod_med)
+summary(mod_max)
+
+
+mod_min$coefficients
+
+summary(mod_min)$r.squared
+
+#plot(mod_min$residuals, pch = 16, col = "red")
+
+
+# conversioni necessarie per plotting
+
+ud_rain_mese$data = as.Date(ud_rain_mese$data, format = "%Y%m")
+#ud_rain_mese$year = as.Date(ud_rain$year, format = "%Y")
+#ud_rain_mese$month = as.Date(ud_rain$month, format = "%m")
+ud_rain_mese$dry = as.numeric(unlist(ud_rain_mese$dry))
+ud_rain_mese$wet = as.numeric(unlist(ud_rain_mese$wet))
+ud_rain_mese$perc = as.numeric(unlist(ud_rain_mese$perc))
+
+ud_rain_anno$dry = as.numeric(unlist(ud_rain_anno$dry))
+ud_rain_anno$wet = as.numeric(unlist(ud_rain_anno$wet))
+ud_rain_anno$perc = as.numeric(unlist(ud_rain_anno$perc))
+
+ud_rain_indici_lustro$lustro <- factor(ud_rain_indici_lustro$lustro, levels=c("93/97", "98/02", "03/07", "08/12", "13/17", "18/22")) # definisce ordine label su boxplot
+ud_rain_indici_lustro$r0 = as.numeric(unlist(ud_rain_indici_lustro$r0))
+ud_rain_indici_lustro$r1 = as.numeric(unlist(ud_rain_indici_lustro$r1))
+ud_rain_indici_lustro$r10 = as.numeric(unlist(ud_rain_indici_lustro$r10))
+ud_rain_indici_lustro$r20 = as.numeric(unlist(ud_rain_indici_lustro$r20))
+ud_rain_indici_lustro$r50 = as.numeric(unlist(ud_rain_indici_lustro$r50))
+
+ud_temp_mese$lustro <- factor(ud_temp_mese$lustro, levels=c("93/97", "98/02", "03/07", "08/12", "13/17", "18/22")) # definisce ordine label
+```
+
+
+
+```{r plotting, warning=FALSE, include=FALSE}
+### PLOTTING ###
+
+# PRECIPITAZIONI
+
+media_pioggia <- ggplot(udine) + 
+  #geom_col(aes(x = month(date), y = pioggia)) +
+  geom_col(aes(x = as_date(data), y = pioggia)) +
+  #scale_x_continuous(labels = Date)#, limits=c(1000, 500000))
+  scale_x_date(date_labels = "%m-%Y", date_breaks = "5 year")
+
+# prima curiosita' su le 10 giornate piu' piovose registrate
+prima <- ggplot() +
+  geom_line(data = udine_whole, aes(x = data, y = pioggia), alpha = 0.3) +
+  geom_text(data = top_ten_pioggia, aes(x = data,y = pioggia, label = pioggia)) +
+  #geom_text(data = top_ten_pioggia, aes(x = data,y = pioggia, label = data), nudge_y = -50, angle = -35, size = 3)+
+  #geom_text(data = top_ten_pioggia, aes(x = data,y = pioggia, label = data), nudge_y = -50, angle = -35, size = 3)
+  geom_text(data = top_ten_pioggia, aes(x = data,y = 10, label = data), angle = -35, size = 3)+
+  labs(x = "", y = "mm di pioggia",
+    title ="Giornate piu' piovose in assoluto",
+    #subtitle = "",
+    #caption = ""
+  ) +
+  theme_minimal()
+#prima
+#ggplotly(prima)
+
+
+# boxplot precipitazioni percentuale di precipitazione mensile
+ud_rain_mese %>%
+  #filter(anno == year(as.Date("1996", "%Y"))) %>%
+  ggplot(aes(x = mese, y = perc, group = mese)) +
+  geom_boxplot()
+
+# grafico percentuali precipitazioni annue
+ud_rain_anno %>%
+  ggplot(aes(x = anno)) +
+  geom_boxplot(aes(y = perc))
+  #scale_y_discrete()
+  
+ud_rain_anno %>%
+  ggplot(aes(x = anno)) +
+  geom_line(aes(y = perc))
+
+ud_rain_mese %>%
+  ggplot() +
+  geom_point(aes(x = perc, y = somma, color = as.factor(mese)))
+
+ud_rain_mese %>%
+  ggplot() +
+  geom_smooth(aes(x = perc, y = somma), method = 'lm', formula = 'y ~ x')+
+  geom_point(aes(x = perc, y = somma, color = as.factor(mese))) +
+  theme_minimal()
+
+#ud_rain_indici_lustro
+
+ud_rain_indici_lustro %>%
+  ggplot(aes(x = lustro, y = somma)) +
+  geom_bar(stat = 'identity')
+
+ud_rain_indici_lustro2 <- ud_rain_indici_lustro %>%
+  pivot_longer(c(r1, r10, r20, r50)) %>%
+  mutate(label_box_y = cumsum(value))
+
+# boxplot costruito con indici
+boxplot_frequenza_indici <- ud_rain_indici_lustro %>% 
+  pivot_longer(c(r50, r20, r10, r1)) %>%
+  mutate(label_box_y = cumsum(value) - 0.5 * value) %>% # calcolo della posizione della label
+  ggplot(aes(x = lustro, y = value, label = value, fill = name)) +
+  geom_bar(stat = 'identity') +
+  geom_text(aes(y = label_box_y, label = value), colour = 'white') +
+  labs(x = "Lustro", y = "Frequenza precipitazioni per intensita'",
+    title ="Frequenza indici ETCCDI",
+    fill = "Indici:"
+    #subtitle = "",
+    #caption = ""
+  ) +
+  theme_minimal()
+
+# piovosita' mese per mese nell'anno 1996
+plot1996 <- ud_rain_mese %>%
+  filter(anno == year(as.Date("1996", "%Y"))) %>% 
+  ggplot(aes(x = mese)) +
+  geom_col(aes(y = perc))+
+  #stat_summary(aes(y = perc), fun = mean, geom = "line", colour = "green") +
+  #geom_line(aes(x = my(str_c(year month)), y = wet)) +
+  #scale_x_continuous(breaks = 1:12)+
+  #scale_y_discrete()+
+  #scale_y_continuous(labels=scales::percent) +
+  labs(y = "frequenza percentuale", x = "mesi")+
+  #ylab("frequenza percentuale") +
+  theme_minimal()
+
+# media piovosita mese per mese fra tutti gli anni
+plotmesiall <- ud_rain_mese %>%
+  group_by(mese) %>% 
+  mutate(perc_m = mean(perc)) %>% 
+  ggplot(aes(x = mese)) +
+  stat_identity(aes(y = perc_m), geom = "bar") +
+  stat_summary(aes(y = perc), fun = mean, geom = "line", colour = "green") +
+  #geom_line(aes(x = my(str_c(year month)), y = wet)) +
+  scale_x_continuous(breaks = 1:12)+
+  #scale_y_discrete()+
+  scale_y_continuous(labels=scales::percent) +
+  labs(y = "frequenza percentuale media", x = "mesi")+
+  #ylab("frequenza percentuale") +
+  theme_minimal()
+
+
+# boxplot media piovosita' mese per mese fra tutti gli anni
+plotmesiallbox <- ud_rain_mese %>% 
+  ggplot() +
+  geom_boxplot(aes(x = factor(mese), y = perc)) +  #notch = FALSE    
+  stat_summary(aes(x = mese, y = perc),fun = "mean", geom = "line", color = "blue", label = "media") +
+  #scale_x_continuous(breaks = 1:12) +
+  scale_y_continuous(labels=scales::percent) +
+  labs(x = "Mesi", y = "Percentuale precipitazione",
+    title ="Boxplot frequenza di precipitazione mensile"
+    #color = "Media precipitazione"
+    #subtitle = "in scala logartimica",
+    #caption = "in blu la media"
+  ) +
+  annotate("text", x = 8, y = 0.6, label = "in blu la media", color = "blue")+
+  theme_minimal()
+
+# grafico animato della variazione percentuale di piovosita' con lo scorrere degli anni
+percmesivar <- ggplot(ud_rain_mese) +
+  geom_col(aes(y = perc,
+               x = mese)) +
+  #stat_summary(aes(y = perc, x=month), fun = mean, geom = "line", colour = "green") +
+  #geom_line(aes(x = my(str_c(year month)), y = wet)) +
+  scale_x_continuous(breaks = 1:12) +
+  scale_y_continuous(labels=scales::percent) +
+  theme_minimal()
+
+p <- percmesivar +
+  labs(title = 'Anno: {round(frame_time, 1)}', x = 'Mesi', y = 'Precipitazione Percentuale') +
+  transition_time(anno) +
+  ease_aes('linear') +
+  shadow_wake(0.10, wrap = FALSE)
+
+#animate(p, renderer = gifski_renderer(), duration = 30)
+
+
+plotanno <- ud_rain_anno %>%
+  ggplot() +
+  geom_point(aes(x = perc, y = somma), color = "pink")
+  #geom_line(aes(y = perc), color = "orange")
+
+scattermesi <- ud_rain_mese %>% 
+  ggplot(aes(x = perc, y = somma)) +
+  geom_point(aes(color = factor(mese)))+
+  #geom_smooth(method = 'loess', formula = 'y ~ x')
+  labs(x = "percentuale", y = "mm",
+    title ="Dispersione quantita'/frequenza precipitazioni mensili",
+    color = "Mesi:"
+  ) +
+  scale_x_continuous(labels=scales::percent) +
+  theme_minimal()
+
+#ggplotly(scattermesi)
+
+scatter <- ud_rain_anno %>% 
+  ggplot(aes(x = perc, y = somma)) +
+  geom_point(aes(color = factor(anno)))+
+  #geom_smooth(method = 'loess', formula = 'y ~ x')
+  labs(x = "percentuale", y = "mm",
+    title ="Dispersione quantita'/frequenza precipitazioni annue",
+    color = "Anni:"
+  ) +
+  scale_x_continuous(labels=scales::percent) +
+  theme_minimal()
+
+#ggplotly(scatter)
+
+prec_tot_anno <- ud_rain_anno%>%
+  ggplot() +
+  geom_col(aes(x = anno, y = somma)) +
+  labs(x = "", y = "mm precipitazioni annue",
+    title ="Precipitazioni annue"
+  ) +
+  theme_minimal()
+
+#ggplotly(prec_tot_anno)
+
+
+# TEMPERATURE
+
+# temperature max
+top_ten_maxtemp <- udine %>%
+  select(data, temp_max) %>%
+  arrange(desc(temp_max)) %>%
+  slice(1:10)
+
+# temperature min
+top_ten_mintemp <- udine %>%
+  select(data, temp_min) %>%
+    arrange(temp_min) %>%
+    slice(1:10)
+
+max_assoluti <- ggplot() +
+  geom_point(data = top_ten_maxtemp, aes(x = data, y = temp_max), color="red") +
+  geom_text(data = top_ten_maxtemp, aes(x = data,y = temp_max, label = temp_max), nudge_y = 0.05, nudge_x = -200) +
+  geom_text(data = top_ten_maxtemp, aes(x = data,y = temp_max, label = data), nudge_y = -0.05, nudge_x = 300, size = 3) +
+  labs(x = "", y = "Temperatura",
+    title ="Giornate storicamente piu' calde"
+  ) +
+  theme_minimal()
+
+min_assoluti <- ggplot() +
+  geom_point(data = top_ten_mintemp, aes(x = data, y = temp_min), color="blue") +
+  geom_text(data = top_ten_mintemp, aes(x = data,y = temp_min, label = temp_min), nudge_y = 0.05, nudge_x = -200) +
+  geom_text(data = top_ten_mintemp, aes(x = data,y = temp_min, label = data), nudge_y = -0.05, nudge_x = 300, size = 3) +
+  labs(x = "", y = "Temperatura",
+    title ="Giornate storicamente piu' fredde"
+    #color = "Media precipitazione"
+    #subtitle = "in scala logartimica",
+    #caption = "in blu la media"
+  ) +
+  theme_minimal()
+
+# temperature medie
+tempmedie <- ggplot(udine, aes(x = data)) +
+  geom_line(aes(y = temp_med)) +
+  geom_smooth(aes(y = temp_min), color = "blue", method = 'lm') +
+  geom_smooth(aes(y = temp_med), color = "green") +
+  geom_smooth(aes(y = temp_max), color = "red") +
+  theme_minimal()
+
+#ggplotly(tempmedie)
+
+# andamento della media delle temperature min e max mensili con lo scorrere dei lustri
+temp_line_minmax_mese <- ud_temp_mese %>%
+  group_by(lustro, mese) %>%
+  summarise(min = mean(min), med = mean(med), max = mean(max))%>%
+  ggplot(aes(x = mese)) +
+  geom_line(aes(y = max, color = factor(lustro))) +
+  geom_line(aes(y = min, color = factor(lustro))) +
+  scale_x_continuous(breaks = 1:12) +
+  labs(x = "Mesi", y = "Temperatura",
+    title ="Curve variazione temperatura massima e minima nell'anno",
+    color = "Lustri:"
+  ) +
+  annotate("text", x = 7, y = 13, label = "Temperature minime", color = "blue")+
+  annotate("text", x = 7, y = 23, label = "Temperature massime", color = "red")+
+  #scale_fill_discrete(breaks=c('B', 'C', 'A'),labels=c('B asdas', 'C sd', 'A Tas')) +
+  theme_minimal()
+
+# plot modello lineare andamento media annua
+model_temp <- ggplot(ud_temp_anno, aes(x = anno)) +
+  geom_point(aes(y = min), color = "blue") +
+  geom_abline(intercept = mod_min$coefficients[1], 
+              slope = mod_min$coefficients[2], 
+              color = "blue") +
+  geom_point(aes(y = med), color = "orange") +
+  geom_abline(intercept = mod_med$coefficients[1], 
+              slope = mod_med$coefficients[2], 
+              color = "orange") +
+  geom_point(aes(y = max), color = "red") +
+  geom_abline(intercept = mod_max$coefficients[1], 
+              slope = mod_max$coefficients[2], 
+              color = "red") +
+  labs(x = "", y = "Temperatura",
+    title ="Modelli andamenti temperature medie annuali"
+  ) +
+  annotate("text", x = 2000, y = 20, label = "Massima", color = "red")+
+  annotate("text", x = 2000, y = 15, label = "Massima", color = "orange")+
+  annotate("text", x = 2000, y = 10, label = "Massima", color = "blue")+
+  theme_minimal()
+
+
+# UMIDITA'
+
+#eliminare valore di umidita' precedenti al 1995 per tutto il resto teniamo range di 30 anni dal 93 al 2022, il valore dell'umidita' influisce molto sulla nostra percezione del calore, infatti piu' il valore e' elevato e piu' sentiremo sia caldo che freddo 
+# provare a graficare andamento umidita
+umid <- udine %>%
+  filter(year(data) >= 1995) %>%
+  ggplot(aes(x = data, y = umid_med)) +
+  geom_line() +
+  geom_smooth()
+  
+#ggplotly(umid)
+
+# purtroppo l'umidita' media puo' essere cosiderato solo dal 1995 in poi poiche' precedentemente i dati erano discordanti
+  
+```
+
+# PRECIPITAZIONI
+
+## Vista generale
+	
+```{r, fig.width=10, fig.height=6, echo=FALSE, message=FALSE, warning=FALSE}
+#ggplotly(prima)
+prima
+```
+
+## Annuali
+
+```{r, fig.width=10, fig.height=5, echo=FALSE, message=FALSE, warning=FALSE}
+ggplotly(prec_tot_anno)
+```
+
+---
+```{r, fig.width=10, fig.height=5, echo=FALSE, message=FALSE, warning=FALSE}
+ggplotly(scatter)
+```
+
+## Mensili
+
+```{r, fig.align="center", fig.width=10, fig.height=5, echo=FALSE, message=FALSE, warning=FALSE}
+ggplotly(scattermesi)
+```
+
+---
+
+La frequenza di precipitazioni mensili 
+
+```{r, fig.align="center", fig.width=10, fig.height=6, echo=FALSE, message=FALSE, warning=FALSE}
+animate(p, renderer = gifski_renderer(), duration = 30)
+```
+
+---
+
+```{r, fig.width=10, fig.height=6, echo=FALSE, message=FALSE, warning=FALSE}
+ggplotly(plotmesiallbox)
+```
+
+## Indici di estremi climatici
+
+Insieme di indici definiti dall’Expert Team on Climate Change Detection and Indices (ETCCDI) della World Meteorological Organization (WMO) delle Nazioni Unite (UN).  
+
+- giorni senza pioggia (indice r0): giorni nell’anno senza precipitazione;  
+- giorni con pioggia (indice r1): giorni nell’anno con precipitazione giornaliera >= 1 mm;  
+- giorni con pioggia (indice r10): giorni nell’anno con precipitazione giornaliera >= 10 mm;  
+- numero di giorni con precipitazione molto intensa (indice r20): giorni nell’anno con precipitazione giornaliera >= 20 mm;  
+- numero di giorni con precipitazione estremamente intensa (indice r50): giorni nell’anno con precipitazione giornaliera >= 50 mm;  
+
+---
+
+```{r, fig.width=10, fig.height=6, echo=FALSE, message=FALSE, warning=FALSE}
+ggplotly(boxplot_frequenza_indici)
+#boxplot_frequenza_indici
+```
+
+# TEMPERATURE
+
+## Record delle temperature registrate:
+```{r echo=FALSE, fig.height=5, fig.width=10, message=FALSE, warning=FALSE}
+ggplotly(max_assoluti)
+```
+
+---
+
+```{r, fig.width=10, fig.height=5, echo=FALSE, message=FALSE, warning=FALSE}
+ggplotly(min_assoluti)
+```
+
+---
+
+```{r, fig.width=10, fig.height=6, echo=FALSE, message=FALSE, warning=FALSE}
+ggplotly(temp_line_minmax_mese)
+```
+
+##
+
+```{r, fig.width=10, fig.height=6, echo=FALSE, message=FALSE, warning=FALSE}
+ggplotly(model_temp)
+```
+## Conclusioni:
+
+- Non sono state individuate variazioni complessive sulle precipitazioi annuali medie consistenti nel lungo termine;
+
+- La frequenza di giorni piovosi in rapporto alle quantita' di precipitazioni rimane costante;
+
+- Caratteristica la frequenza di precipitazioni in base al mese di appartenenza;
+
+- La distribuzione delle precipitazioni intense negli scorsi sei lustri rimane costante:
+
+- I modelli denotano un effettivo aumento lineare costante delle temperature minime, medie e massime annuali;
+
+- Aumento distinto si nota anche nelle curve di temperature minime e massime mensili.
+
+##
+
+Per una consapevolezza sul cambiamento climatico.  
+
+Grazie per l'attenzione.
